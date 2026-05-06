@@ -2,7 +2,7 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: ["main"] # 只有当 main 分支有提交时才触发
+    branches: ["main","master"] # 当推送到 main 或 master 分支时触发
 
 jobs:
   build:
