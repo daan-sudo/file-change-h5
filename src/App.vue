@@ -14,7 +14,7 @@
           <Badge variant="outline" class="mb-3">Office Converter</Badge>
           <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">办公文件转 PDF</h1>
           <p class="mt-2 text-sm text-muted-foreground">
-            单文件上传，服务端实时进度，完成后确认下载。
+            单文件上传，服务端实时进度，完成后确认下载
             <button class="ml-2 font-medium text-foreground underline underline-offset-4" @click="openLicenseDialog()">
               {{ licenseCode ? '更换授权码' : '输入授权码' }}
             </button>
