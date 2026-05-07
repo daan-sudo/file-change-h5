@@ -1,3 +1,205 @@
+<template>
+  <main class="min-h-screen bg-background text-foreground">
+    <input
+      ref="fileInput"
+      class="hidden"
+      type="file"
+      :accept="supportedExts.map((ext) => `.${ext}`).join(',')"
+      @change="handleFileChange"
+    />
+
+    <section class="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-8">
+      <header class="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <Badge variant="outline" class="mb-3">Office Converter</Badge>
+          <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">办公文件转 PDF</h1>
+          <p class="mt-2 text-sm text-muted-foreground">单文件上传，服务端实时进度，完成后确认下载。</p>
+        </div>
+        <div class="hidden items-center gap-2 sm:flex">
+          <Button variant="outline" :disabled="!currentFile || converting" @click="removeFile">
+            <Trash2 class="h-4 w-4" />
+            移除文件
+          </Button>
+          <Button :loading="converting" :disabled="!canConvert" @click="convertFile">
+            <FileText class="h-4 w-4" />
+            开始转换
+          </Button>
+        </div>
+      </header>
+
+      <div class="grid flex-1 gap-5 py-5 lg:grid-cols-[360px_1fr] xl:grid-cols-[400px_1fr]">
+        <aside class="space-y-4">
+          <Card
+            class="cursor-pointer border-dashed p-6 transition-colors hover:bg-muted/50"
+            @click="openFilePicker"
+            @dragover.prevent
+            @drop.prevent="handleDrop"
+          >
+            <div class="flex flex-col items-center text-center">
+              <div class="rounded-full border bg-background p-4 shadow-sm">
+                <UploadCloud class="h-8 w-8 text-muted-foreground" />
+              </div>
+              <h2 class="mt-4 text-base font-medium">拖拽或点击上传单个办公文件</h2>
+              <p class="mt-2 text-sm text-muted-foreground">支持 Word、PPT、Excel，重新上传会替换当前文件。</p>
+            </div>
+          </Card>
+
+          <div class="grid grid-cols-3 gap-3">
+            <Card class="p-3">
+              <span class="text-xs text-muted-foreground">当前文件</span>
+              <strong class="mt-1 block text-lg">{{ currentFile ? '1' : '0' }}</strong>
+            </Card>
+            <Card class="p-3">
+              <span class="text-xs text-muted-foreground">状态</span>
+              <strong class="mt-1 block text-lg">{{ currentStep }}</strong>
+            </Card>
+            <Card class="p-3">
+              <span class="text-xs text-muted-foreground">大小</span>
+              <strong class="mt-1 block text-lg">{{ currentFile ? formatSize(currentFile.size) : '0 KB' }}</strong>
+            </Card>
+          </div>
+
+          <Card class="hidden p-5 lg:block">
+            <div class="space-y-5">
+              <div class="flex gap-3">
+                <div class="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <UploadCloud class="h-4 w-4" />
+                </div>
+                <div>
+                  <p class="font-medium">上传文件</p>
+                  <p class="text-sm text-muted-foreground">选择 doc、docx、ppt、pptx、xls、xlsx</p>
+                </div>
+              </div>
+              <div class="flex gap-3">
+                <div class="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+                  <Loader2 class="h-4 w-4" />
+                </div>
+                <div>
+                  <p class="font-medium">实时转换</p>
+                  <p class="text-sm text-muted-foreground">服务端转换时持续轮询任务进度</p>
+                </div>
+              </div>
+              <div class="flex gap-3">
+                <div class="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+                  <Download class="h-4 w-4" />
+                </div>
+                <div>
+                  <p class="font-medium">确认下载</p>
+                  <p class="text-sm text-muted-foreground">完成后询问是否立即下载 PDF</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card class="p-4">
+            <div class="flex gap-3">
+              <ShieldCheck class="mt-0.5 h-5 w-5 text-muted-foreground" />
+              <div>
+                <p class="font-medium">已接入服务端</p>
+                <p class="mt-1 text-sm leading-6 text-muted-foreground">上传、进度轮询和 PDF 下载都通过 Nest 接口完成。</p>
+              </div>
+            </div>
+          </Card>
+        </aside>
+
+        <section class="min-w-0">
+          <div class="mb-4">
+            <h2 class="text-lg font-semibold tracking-tight">单文件转换</h2>
+            <p class="text-sm text-muted-foreground">上传一个文件后开始转换，完成后会弹窗确认下载。</p>
+          </div>
+
+          <Card v-if="!currentFile" class="grid min-h-[360px] place-items-center border-dashed p-8 text-center">
+            <div>
+              <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                <UploadCloud class="h-7 w-7 text-muted-foreground" />
+              </div>
+              <p class="mt-4 font-medium">还没有选择文件</p>
+              <p class="mt-2 text-sm text-muted-foreground">上传 Word、PPT 或 Excel 文件后开始转换。</p>
+              <Button class="mt-5" @click="openFilePicker">
+                <UploadCloud class="h-4 w-4" />
+                选择文件
+              </Button>
+            </div>
+          </Card>
+
+          <Card v-else class="p-5 sm:p-6">
+            <div class="flex min-w-0 items-center gap-3">
+              <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border bg-muted">
+                <component :is="fileIcon(currentFile.ext)" class="h-6 w-6 text-foreground" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="truncate text-base font-semibold sm:text-lg">{{ currentFile.name }}</h3>
+                  <Badge :variant="statusVariant(currentFile.status)">{{ statusText(currentFile.status) }}</Badge>
+                </div>
+                <p class="mt-1 text-sm text-muted-foreground">
+                  {{ currentFile.ext.toUpperCase() }} · {{ formatSize(currentFile.size) }}
+                </p>
+              </div>
+            </div>
+
+            <div class="mt-8">
+              <div class="mb-3 flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                <span class="truncate">{{ currentFile.serverMessage || '转换进度' }}</span>
+                <span>{{ currentFile.progress }}%</span>
+              </div>
+              <Progress :model-value="currentFile.progress" />
+            </div>
+
+            <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <Button v-if="currentFile.status === 'done'" size="lg" @click="downloadFile(currentFile)">
+                <Download class="h-4 w-4" />
+                下载 PDF
+              </Button>
+              <Button v-else size="lg" :loading="converting" :disabled="!canConvert" @click="convertFile">
+                <Check class="h-4 w-4" />
+                开始转换
+              </Button>
+              <Button variant="outline" size="lg" :disabled="converting" @click="removeFile">
+                <Trash2 class="h-4 w-4" />
+                移除文件
+              </Button>
+            </div>
+          </Card>
+        </section>
+      </div>
+
+      <nav class="mobile-action-bar">
+        <Button variant="outline" :disabled="!currentFile || converting" @click="removeFile">移除</Button>
+        <Button v-if="currentFile?.status === 'done'" @click="downloadFile(currentFile)">
+          <Download class="h-4 w-4" />
+          下载 PDF
+        </Button>
+        <Button v-else :loading="converting" :disabled="!canConvert" @click="convertFile">
+          <Check class="h-4 w-4" />
+          开始转换
+        </Button>
+      </nav>
+    </section>
+
+    <div v-if="notice" class="fixed right-4 top-4 z-50 max-w-sm rounded-md border bg-card px-4 py-3 text-sm shadow-lg" :class="noticeType === 'destructive' ? 'border-destructive text-destructive' : ''">
+      {{ notice }}
+    </div>
+
+    <div v-if="showDownloadDialog && completedFile" class="fixed inset-0 z-50 grid place-items-center bg-black/45 px-4">
+      <Card class="w-full max-w-md p-6">
+        <div class="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <Download class="h-5 w-5" />
+        </div>
+        <h2 class="mt-5 text-lg font-semibold tracking-tight">转换完成，是否立即下载？</h2>
+        <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ completedFile.name }} 已转换为 PDF 文件。</p>
+        <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <Button variant="outline" @click="showDownloadDialog = false">稍后下载</Button>
+          <Button @click="downloadFile(completedFile)">
+            <Download class="h-4 w-4" />
+            下载 PDF
+          </Button>
+        </div>
+      </Card>
+    </div>
+  </main>
+</template>
+
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
@@ -42,7 +244,7 @@ interface ConvertProgress {
   downloadUrl?: string
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3000'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api'
 const supportedExts = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx']
 const maxSize = 50 * 1024 * 1024
 const currentFile = ref<OfficeFile | null>(null)
@@ -297,204 +499,3 @@ function showNotice(message: string, type: NoticeType = 'default') {
 }
 </script>
 
-<template>
-  <main class="min-h-screen bg-background text-foreground">
-    <input
-      ref="fileInput"
-      class="hidden"
-      type="file"
-      :accept="supportedExts.map((ext) => `.${ext}`).join(',')"
-      @change="handleFileChange"
-    />
-
-    <section class="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-8">
-      <header class="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <Badge variant="outline" class="mb-3">Office Converter</Badge>
-          <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">办公文件转 PDF</h1>
-          <p class="mt-2 text-sm text-muted-foreground">单文件上传，服务端实时进度，完成后确认下载。</p>
-        </div>
-        <div class="hidden items-center gap-2 sm:flex">
-          <Button variant="outline" :disabled="!currentFile || converting" @click="removeFile">
-            <Trash2 class="h-4 w-4" />
-            移除文件
-          </Button>
-          <Button :loading="converting" :disabled="!canConvert" @click="convertFile">
-            <FileText class="h-4 w-4" />
-            开始转换
-          </Button>
-        </div>
-      </header>
-
-      <div class="grid flex-1 gap-5 py-5 lg:grid-cols-[360px_1fr] xl:grid-cols-[400px_1fr]">
-        <aside class="space-y-4">
-          <Card
-            class="cursor-pointer border-dashed p-6 transition-colors hover:bg-muted/50"
-            @click="openFilePicker"
-            @dragover.prevent
-            @drop.prevent="handleDrop"
-          >
-            <div class="flex flex-col items-center text-center">
-              <div class="rounded-full border bg-background p-4 shadow-sm">
-                <UploadCloud class="h-8 w-8 text-muted-foreground" />
-              </div>
-              <h2 class="mt-4 text-base font-medium">拖拽或点击上传单个办公文件</h2>
-              <p class="mt-2 text-sm text-muted-foreground">支持 Word、PPT、Excel，重新上传会替换当前文件。</p>
-            </div>
-          </Card>
-
-          <div class="grid grid-cols-3 gap-3">
-            <Card class="p-3">
-              <span class="text-xs text-muted-foreground">当前文件</span>
-              <strong class="mt-1 block text-lg">{{ currentFile ? '1' : '0' }}</strong>
-            </Card>
-            <Card class="p-3">
-              <span class="text-xs text-muted-foreground">状态</span>
-              <strong class="mt-1 block text-lg">{{ currentStep }}</strong>
-            </Card>
-            <Card class="p-3">
-              <span class="text-xs text-muted-foreground">大小</span>
-              <strong class="mt-1 block text-lg">{{ currentFile ? formatSize(currentFile.size) : '0 KB' }}</strong>
-            </Card>
-          </div>
-
-          <Card class="hidden p-5 lg:block">
-            <div class="space-y-5">
-              <div class="flex gap-3">
-                <div class="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                  <UploadCloud class="h-4 w-4" />
-                </div>
-                <div>
-                  <p class="font-medium">上传文件</p>
-                  <p class="text-sm text-muted-foreground">选择 doc、docx、ppt、pptx、xls、xlsx</p>
-                </div>
-              </div>
-              <div class="flex gap-3">
-                <div class="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
-                  <Loader2 class="h-4 w-4" />
-                </div>
-                <div>
-                  <p class="font-medium">实时转换</p>
-                  <p class="text-sm text-muted-foreground">服务端转换时持续轮询任务进度</p>
-                </div>
-              </div>
-              <div class="flex gap-3">
-                <div class="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
-                  <Download class="h-4 w-4" />
-                </div>
-                <div>
-                  <p class="font-medium">确认下载</p>
-                  <p class="text-sm text-muted-foreground">完成后询问是否立即下载 PDF</p>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          <Card class="p-4">
-            <div class="flex gap-3">
-              <ShieldCheck class="mt-0.5 h-5 w-5 text-muted-foreground" />
-              <div>
-                <p class="font-medium">已接入服务端</p>
-                <p class="mt-1 text-sm leading-6 text-muted-foreground">上传、进度轮询和 PDF 下载都通过 Nest 接口完成。</p>
-              </div>
-            </div>
-          </Card>
-        </aside>
-
-        <section class="min-w-0">
-          <div class="mb-4">
-            <h2 class="text-lg font-semibold tracking-tight">单文件转换</h2>
-            <p class="text-sm text-muted-foreground">上传一个文件后开始转换，完成后会弹窗确认下载。</p>
-          </div>
-
-          <Card v-if="!currentFile" class="grid min-h-[360px] place-items-center border-dashed p-8 text-center">
-            <div>
-              <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                <UploadCloud class="h-7 w-7 text-muted-foreground" />
-              </div>
-              <p class="mt-4 font-medium">还没有选择文件</p>
-              <p class="mt-2 text-sm text-muted-foreground">上传 Word、PPT 或 Excel 文件后开始转换。</p>
-              <Button class="mt-5" @click="openFilePicker">
-                <UploadCloud class="h-4 w-4" />
-                选择文件
-              </Button>
-            </div>
-          </Card>
-
-          <Card v-else class="p-5 sm:p-6">
-            <div class="flex min-w-0 items-center gap-3">
-              <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border bg-muted">
-                <component :is="fileIcon(currentFile.ext)" class="h-6 w-6 text-foreground" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-2">
-                  <h3 class="truncate text-base font-semibold sm:text-lg">{{ currentFile.name }}</h3>
-                  <Badge :variant="statusVariant(currentFile.status)">{{ statusText(currentFile.status) }}</Badge>
-                </div>
-                <p class="mt-1 text-sm text-muted-foreground">
-                  {{ currentFile.ext.toUpperCase() }} · {{ formatSize(currentFile.size) }}
-                </p>
-              </div>
-            </div>
-
-            <div class="mt-8">
-              <div class="mb-3 flex items-center justify-between gap-3 text-sm text-muted-foreground">
-                <span class="truncate">{{ currentFile.serverMessage || '转换进度' }}</span>
-                <span>{{ currentFile.progress }}%</span>
-              </div>
-              <Progress :model-value="currentFile.progress" />
-            </div>
-
-            <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <Button v-if="currentFile.status === 'done'" size="lg" @click="downloadFile(currentFile)">
-                <Download class="h-4 w-4" />
-                下载 PDF
-              </Button>
-              <Button v-else size="lg" :loading="converting" :disabled="!canConvert" @click="convertFile">
-                <Check class="h-4 w-4" />
-                开始转换
-              </Button>
-              <Button variant="outline" size="lg" :disabled="converting" @click="removeFile">
-                <Trash2 class="h-4 w-4" />
-                移除文件
-              </Button>
-            </div>
-          </Card>
-        </section>
-      </div>
-
-      <nav class="mobile-action-bar">
-        <Button variant="outline" :disabled="!currentFile || converting" @click="removeFile">移除</Button>
-        <Button v-if="currentFile?.status === 'done'" @click="downloadFile(currentFile)">
-          <Download class="h-4 w-4" />
-          下载 PDF
-        </Button>
-        <Button v-else :loading="converting" :disabled="!canConvert" @click="convertFile">
-          <Check class="h-4 w-4" />
-          开始转换
-        </Button>
-      </nav>
-    </section>
-
-    <div v-if="notice" class="fixed right-4 top-4 z-50 max-w-sm rounded-md border bg-card px-4 py-3 text-sm shadow-lg" :class="noticeType === 'destructive' ? 'border-destructive text-destructive' : ''">
-      {{ notice }}
-    </div>
-
-    <div v-if="showDownloadDialog && completedFile" class="fixed inset-0 z-50 grid place-items-center bg-black/45 px-4">
-      <Card class="w-full max-w-md p-6">
-        <div class="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <Download class="h-5 w-5" />
-        </div>
-        <h2 class="mt-5 text-lg font-semibold tracking-tight">转换完成，是否立即下载？</h2>
-        <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ completedFile.name }} 已转换为 PDF 文件。</p>
-        <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <Button variant="outline" @click="showDownloadDialog = false">稍后下载</Button>
-          <Button @click="downloadFile(completedFile)">
-            <Download class="h-4 w-4" />
-            下载 PDF
-          </Button>
-        </div>
-      </Card>
-    </div>
-  </main>
-</template>
