@@ -13,7 +13,12 @@
         <div>
           <Badge variant="outline" class="mb-3">Office Converter</Badge>
           <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">办公文件转 PDF</h1>
-          <p class="mt-2 text-sm text-muted-foreground">单文件上传，服务端实时进度，完成后确认下载。</p>
+          <p class="mt-2 text-sm text-muted-foreground">
+            单文件上传，服务端实时进度，完成后确认下载。
+            <button class="ml-2 font-medium text-foreground underline underline-offset-4" @click="openLicenseDialog()">
+              {{ licenseCode ? '更换授权码' : '输入授权码' }}
+            </button>
+          </p>
         </div>
         <div class="hidden items-center gap-2 sm:flex">
           <Button variant="outline" :disabled="!currentFile || converting" @click="removeFile">
@@ -197,11 +202,32 @@
         </div>
       </Card>
     </div>
+
+    <div v-if="showLicenseDialog" class="fixed inset-0 z-50 grid place-items-center bg-black/45 px-4">
+      <Card class="w-full max-w-md p-6">
+        <div class="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <ShieldCheck class="h-5 w-5" />
+        </div>
+        <h2 class="mt-5 text-lg font-semibold tracking-tight">请输入授权码</h2>
+        <p class="mt-2 text-sm leading-6 text-muted-foreground">授权码会保存在当前浏览器中，转换文件时会一起提交给服务端校验。</p>
+        <input
+          v-model.trim="licenseInput"
+          class="mt-5 h-10 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+          placeholder="请输入授权码"
+          type="text"
+          @keyup.enter="saveLicenseCode"
+        />
+        <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <Button v-if="licenseVerified" variant="outline" @click="showLicenseDialog = false">稍后再说</Button>
+          <Button :loading="verifyingLicense" @click="saveLicenseCode">验证授权码</Button>
+        </div>
+      </Card>
+    </div>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   Check,
   Download,
@@ -244,7 +270,7 @@ interface ConvertProgress {
   downloadUrl?: string
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
 const supportedExts = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx']
 const maxSize = 50 * 1024 * 1024
 const currentFile = ref<OfficeFile | null>(null)
@@ -252,6 +278,11 @@ const converting = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const showDownloadDialog = ref(false)
 const completedFile = ref<OfficeFile | null>(null)
+const licenseCode = ref('')
+const licenseInput = ref('')
+const licenseVerified = ref(false)
+const verifyingLicense = ref(false)
+const showLicenseDialog = ref(false)
 const notice = ref('')
 const noticeType = ref<NoticeType>('default')
 let fileSeed = 0
@@ -262,8 +293,19 @@ const canConvert = computed(
   () =>
     Boolean(currentFile.value) &&
     (currentFile.value?.status === 'ready' || currentFile.value?.status === 'error') &&
+    licenseVerified.value &&
     !converting.value,
 )
+
+onMounted(() => {
+  licenseCode.value = localStorage.getItem('office-converter-license-code') ?? ''
+  licenseInput.value = licenseCode.value
+  if (licenseCode.value) {
+    void verifyLicenseCode(licenseCode.value, { silent: true })
+  } else {
+    showLicenseDialog.value = true
+  }
+})
 
 const currentStep = computed(() => {
   if (!currentFile.value) return '等待上传'
@@ -375,8 +417,22 @@ function removeFile() {
   showDownloadDialog.value = false
 }
 
+function openLicenseDialog(message?: string) {
+  licenseInput.value = licenseCode.value
+  showLicenseDialog.value = true
+
+  if (message) {
+    showNotice(message, 'destructive')
+  }
+}
+
 async function convertFile() {
   const file = currentFile.value
+
+  if (!licenseVerified.value) {
+    openLicenseDialog('请先输入并验证授权码')
+    return
+  }
 
   if (!file || !canConvert.value) return
 
@@ -391,6 +447,9 @@ async function convertFile() {
 
     const response = await fetch(`${apiBaseUrl}/api/convert`, {
       method: 'POST',
+      headers: {
+        'x-license-code': licenseCode.value,
+      },
       body: formData,
     })
 
@@ -408,8 +467,76 @@ async function convertFile() {
     file.progress = 100
     file.serverMessage = error instanceof Error ? error.message : '转换失败'
     converting.value = false
+    if (isLicenseError(file.serverMessage)) {
+      resetLicense(file.serverMessage)
+    }
     showNotice(file.serverMessage, 'destructive')
   }
+}
+
+async function saveLicenseCode() {
+  if (!licenseInput.value) {
+    showNotice('请输入授权码', 'destructive')
+    return
+  }
+
+  await verifyLicenseCode(licenseInput.value)
+}
+
+async function verifyLicenseCode(code: string, options: { silent?: boolean } = {}) {
+  const normalizedCode = code.trim().toUpperCase()
+
+  if (!normalizedCode) {
+    openLicenseDialog('请输入授权码')
+    return false
+  }
+
+  try {
+    verifyingLicense.value = true
+    const response = await fetch(`${apiBaseUrl}/api/licenses/verify`, {
+      headers: {
+        'x-license-code': normalizedCode,
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response))
+    }
+
+    licenseCode.value = normalizedCode
+    licenseInput.value = normalizedCode
+    licenseVerified.value = true
+    localStorage.setItem('office-converter-license-code', normalizedCode)
+    showLicenseDialog.value = false
+
+    if (!options.silent) {
+      showNotice('授权码验证通过')
+    }
+
+    return true
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '授权码验证失败'
+    resetLicense(message)
+    return false
+  } finally {
+    verifyingLicense.value = false
+  }
+}
+
+function resetLicense(message?: string) {
+  licenseCode.value = ''
+  licenseInput.value = ''
+  licenseVerified.value = false
+  localStorage.removeItem('office-converter-license-code')
+  showLicenseDialog.value = true
+
+  if (message) {
+    showNotice(message, 'destructive')
+  }
+}
+
+function isLicenseError(message: string) {
+  return message.includes('授权码')
 }
 
 function pollProgress(file: OfficeFile) {
@@ -442,6 +569,9 @@ function pollProgress(file: OfficeFile) {
         }
       } catch (error) {
         clearProgressTimer()
+        if (error instanceof Error && isLicenseError(error.message)) {
+          resetLicense(error.message)
+        }
         reject(error)
       }
     }, 500)
@@ -473,13 +603,19 @@ async function readErrorMessage(response: Response) {
 }
 
 function downloadFile(file: OfficeFile) {
+  if (!licenseVerified.value) {
+    openLicenseDialog('授权码未验证，请重新输入')
+    return
+  }
+
   if (!file.downloadUrl) {
     showNotice('下载地址不存在，请重新转换', 'destructive')
     return
   }
 
   const link = document.createElement('a')
-  link.href = `${apiBaseUrl}${file.downloadUrl}`
+  const separator = file.downloadUrl.includes('?') ? '&' : '?'
+  link.href = `${apiBaseUrl}${file.downloadUrl}${separator}licenseCode=${encodeURIComponent(licenseCode.value)}`
   link.download = `${file.name.replace(/\.[^.]+$/, '')}.pdf`
   link.click()
   showDownloadDialog.value = false
@@ -498,4 +634,3 @@ function showNotice(message: string, type: NoticeType = 'default') {
   }, 2600)
 }
 </script>
-
